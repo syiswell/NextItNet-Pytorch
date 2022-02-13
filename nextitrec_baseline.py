@@ -139,12 +139,6 @@ if args.shrink_lr == True:
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.02)
 
 criterion = nn.CrossEntropyLoss()
-curr_preds_5 = []
-rec_preds_5 = []
-ndcg_preds_5 = []
-curr_preds_20 = []
-rec_preds_20 = []
-ndcg_preds_20 = []
 best_acc = 0
 
 
@@ -163,7 +157,10 @@ def test(epoch):
             inputs, targets = torch.LongTensor(batch_sam[:,:-1]).to(args.device), torch.LongTensor(batch_sam[:,-1]).to(args.device).view([-1])
             outputs = model(inputs, onecall=True) # [batch_size, item_size] only predict the last position
 
-            accuracy(outputs.data.cpu().numpy(), targets.data.cpu().numpy(), 0, batch_idx, batch_num, epoch)
+            _, sort_idx_20 = torch.topk(outputs, k=args.top_k + 15, sorted=True)  # [batch_size, 20]
+            _, sort_idx_5 = torch.topk(outputs, k=args.top_k, sorted=True)  # [batch_size, 5]
+            accuracy(sort_idx_5.data.cpu().numpy(), sort_idx_20.data.cpu().numpy(), targets.data.cpu().numpy(),
+                     batch_idx, batch_num, epoch)
 
             _, predicted = outputs.max(1)
             total += targets.size(0)
@@ -234,25 +231,18 @@ def train(epoch):
         lr_scheduler.step()
 
 
-def accuracy(output, target, loss, batch_idx, batch_num, epoch, topk=(args.top_k, args.top_k+15)): # output: [batch_size, item_size] target: [batch_size]
+def accuracy(pred_items_5, pred_items_20, target, batch_idx, batch_num, epoch): # output: [batch_size, 20] target: [batch_size]
     """Computes the accuracy over the k top predictions for the specified values of k"""
-    global curr_preds_5
-    global rec_preds_5
-    global ndcg_preds_5
-    global curr_preds_20
-    global rec_preds_20
-    global ndcg_preds_20
-
-    for bi in range(output.shape[0]):
-        pred_items_5 = utils.sample_top_k(output[bi], top_k=topk[0])  # top_k=5
-        pred_items_20 = utils.sample_top_k(output[bi], top_k=topk[1])
+    # print(type(pred_items_20[0]))
+    # print(type(pred_items_5[0]))
+    for bi in range(pred_items_5.shape[0]):
 
         true_item=target[bi]
-        predictmap_5={ch : i for i, ch in enumerate(pred_items_5)}
-        pred_items_20 = {ch: i for i, ch in enumerate(pred_items_20)}
+        predictmap_5={ch : i for i, ch in enumerate(pred_items_5[bi])}
+        predictmap_20 = {ch: i for i, ch in enumerate(pred_items_20[bi])}
 
         rank_5 = predictmap_5.get(true_item)
-        rank_20 = pred_items_20.get(true_item)
+        rank_20 = predictmap_20.get(true_item)
         if rank_5 == None:
             curr_preds_5.append(0.0)
             rec_preds_5.append(0.0)
@@ -273,7 +263,7 @@ def accuracy(output, target, loss, batch_idx, batch_num, epoch, topk=(args.top_k
             Rec_20 = 1.0#3
             ndcg_20 = 1.0 / math.log(rank_20 + 2, 2)  # 3
             curr_preds_20.append(MRR_20)
-            rec_preds_20.append(Rec_20)#4
+            rec_preds_20.append(Rec_20) # 4
             ndcg_preds_20.append(ndcg_20)  # 4
 
     if batch_idx % max(10, batch_num//10) == 0:
@@ -281,7 +271,6 @@ def accuracy(output, target, loss, batch_idx, batch_num, epoch, topk=(args.top_k
         #             epoch, args.epochs, batch_idx,  batch_num, loss/(batch_idx+1)))
         INFO_LOG("epoch/total_epoch: {}/{}\t batch/total_batches: {}/{}".format(
             epoch, args.epochs, batch_idx, batch_num))
-
         INFO_LOG("Accuracy hit_5: {}".format(sum(rec_preds_5) / float(len(rec_preds_5))))  # 5
         INFO_LOG("Accuracy hit_20: {}".format(sum(rec_preds_20) / float(len(rec_preds_20))))  # 5
 
@@ -292,6 +281,12 @@ if __name__ == '__main__':
         print(key, u.size())
     for epoch in range(args.epochs):
         train(epoch)
+	curr_preds_5 = []
+        rec_preds_5 = []
+        ndcg_preds_5 = []
+        curr_preds_20 = []
+        rec_preds_20 = []
+        ndcg_preds_20 = []
         test(epoch)
         state = {
             'net': model.state_dict(),
